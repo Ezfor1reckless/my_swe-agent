@@ -13,6 +13,8 @@ _ENVIRONMENT_MAPPING = {
     "swerex_modal": "minisweagent.environments.extra.swerex_modal.SwerexModalEnvironment",
     "bubblewrap": "minisweagent.environments.extra.bubblewrap.BubblewrapEnvironment",
     "contree": "minisweagent.environments.extra.contree.ContreeEnvironment",
+    "background": "minisweagent.environments.background.BackgroundEnvironment",
+    "bash": "minisweagent.environments.extra.bash.BashEnvironment",
 }
 
 

@@ -4,11 +4,20 @@
 # Read this first: https://mini-swe-agent.com/latest/usage/mini/  (usage)
 
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 import typer
 from rich.console import Console
+
+# Force UTF-8 so non-ASCII task text (e.g. Chinese) survives the Windows console
+# codepage: without this, `mini -t 中文` and subprocess I/O can get mangled
+# on a cp936/GBK console. See run/task.py for the same guard.
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+os.environ.setdefault("PYTHONUTF8", "1")
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
 
 from minisweagent import global_config_dir
 from minisweagent.agents import get_agent
@@ -91,13 +100,23 @@ def main(
     })
     config = recursive_merge(*configs)
 
+    # Be lenient about cost tracking by default: models not in litellm's local
+    # price table (e.g. openrouter/google/gemini-2.5-flash) raise on cost calc,
+    # which would abort the whole run. Users can opt back into strict tracking
+    # with `-c model.cost_tracking=default`.
+    config.setdefault("model", {}).setdefault("cost_tracking", "ignore_errors")
+
     if (run_task := config.get("run", {}).get("task", UNSET)) is UNSET:
         console.print("[bold yellow]What do you want to do?")
         run_task = _multiline_prompt()
         console.print("[bold green]Got that, thanks![/bold green]")
 
     model = get_model(config=config.get("model", {}))
-    env = get_environment(config.get("environment", {}), default_type="local")
+    # On Windows the local env shells out to cmd.exe, which can't run the bash
+    # syntax the agent is taught (heredocs, VAR=x cmd prefixes) and mangles
+    # non-ASCII text. Default to the bash env (Git Bash) there.
+    default_env = "bash" if os.name == "nt" else "local"
+    env = get_environment(config.get("environment", {}), default_type=default_env)
     agent = get_agent(model, env, config.get("agent", {}), default_type="interactive")
     agent.run(run_task)
     if (output_path := config.get("agent", {}).get("output_path")):

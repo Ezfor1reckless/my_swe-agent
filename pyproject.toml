@@ -81,6 +81,11 @@ contree = [
     "contree-sdk>=0.2.0",
 ]
 
+mcp = [
+    "mcp>=1.0.0",
+    "anyio",
+]
+
 [project.urls]
 Documentation = "https://mini-swe-agent.com/latest/"
 Repository = "https://github.com/SWE-agent/mini-swe-agent"
@@ -89,6 +94,7 @@ Repository = "https://github.com/SWE-agent/mini-swe-agent"
 [project.scripts]
 mini = "minisweagent.run.mini:app"
 mini-swe-agent = "minisweagent.run.mini:app"
+mini-task = "minisweagent.run.task:app"
 mini-extra = "minisweagent.run.utilities.mini_extra:main"
 mini-e= "minisweagent.run.utilities.mini_extra:main"
 
