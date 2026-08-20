@@ -2754,11 +2754,20 @@
 <span class="c1"># Read this first: https://mini-swe-agent.com/latest/usage/mini/  (usage)</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">typer</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rich.console</span><span class="w"> </span><span class="kn">import</span> <span class="n">Console</span>
+
+<span class="c1"># Force UTF-8 so non-ASCII task text (e.g. Chinese) survives the Windows console</span>
+<span class="c1"># codepage: without this, `mini -t 中文` and subprocess I/O can get mangled</span>
+<span class="c1"># on a cp936/GBK console. See run/task.py for the same guard.</span>
+<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">"PYTHONIOENCODING"</span><span class="p">,</span> <span class="s2">"utf-8"</span><span class="p">)</span>
+<span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">"PYTHONUTF8"</span><span class="p">,</span> <span class="s2">"1"</span><span class="p">)</span>
+<span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="p">,</span> <span class="s2">"reconfigure"</span><span class="p">):</span>
+    <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">reconfigure</span><span class="p">(</span><span class="n">encoding</span><span class="o">=</span><span class="s2">"utf-8"</span><span class="p">)</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">minisweagent</span><span class="w"> </span><span class="kn">import</span> <span class="n">global_config_dir</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">minisweagent.agents</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_agent</span>
@@ -2841,13 +2850,23 @@
     <span class="p">})</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">recursive_merge</span><span class="p">(</span><span class="o">*</span><span class="n">configs</span><span class="p">)</span>
 
+    <span class="c1"># Be lenient about cost tracking by default: models not in litellm's local</span>
+    <span class="c1"># price table (e.g. openrouter/google/gemini-2.5-flash) raise on cost calc,</span>
+    <span class="c1"># which would abort the whole run. Users can opt back into strict tracking</span>
+    <span class="c1"># with `-c model.cost_tracking=default`.</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">"model"</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">"cost_tracking"</span><span class="p">,</span> <span class="s2">"ignore_errors"</span><span class="p">)</span>
+
     <span class="k">if</span> <span class="p">(</span><span class="n">run_task</span> <span class="o">:=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"run"</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"task"</span><span class="p">,</span> <span class="n">UNSET</span><span class="p">))</span> <span class="ow">is</span> <span class="n">UNSET</span><span class="p">:</span>
         <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="s2">"[bold yellow]What do you want to do?"</span><span class="p">)</span>
         <span class="n">run_task</span> <span class="o">=</span> <span class="n">_multiline_prompt</span><span class="p">()</span>
         <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="s2">"[bold green]Got that, thanks![/bold green]"</span><span class="p">)</span>
 
     <span class="n">model</span> <span class="o">=</span> <span class="n">get_model</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">,</span> <span class="p">{}))</span>
-    <span class="n">env</span> <span class="o">=</span> <span class="n">get_environment</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"environment"</span><span class="p">,</span> <span class="p">{}),</span> <span class="n">default_type</span><span class="o">=</span><span class="s2">"local"</span><span class="p">)</span>
+    <span class="c1"># On Windows the local env shells out to cmd.exe, which can't run the bash</span>
+    <span class="c1"># syntax the agent is taught (heredocs, VAR=x cmd prefixes) and mangles</span>
+    <span class="c1"># non-ASCII text. Default to the bash env (Git Bash) there.</span>
+    <span class="n">default_env</span> <span class="o">=</span> <span class="s2">"bash"</span> <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="s2">"nt"</span> <span class="k">else</span> <span class="s2">"local"</span>
+    <span class="n">env</span> <span class="o">=</span> <span class="n">get_environment</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"environment"</span><span class="p">,</span> <span class="p">{}),</span> <span class="n">default_type</span><span class="o">=</span><span class="n">default_env</span><span class="p">)</span>
     <span class="n">agent</span> <span class="o">=</span> <span class="n">get_agent</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">env</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"agent"</span><span class="p">,</span> <span class="p">{}),</span> <span class="n">default_type</span><span class="o">=</span><span class="s2">"interactive"</span><span class="p">)</span>
     <span class="n">agent</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_task</span><span class="p">)</span>
     <span class="k">if</span> <span class="p">(</span><span class="n">output_path</span> <span class="o">:=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"agent"</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"output_path"</span><span class="p">)):</span>
@@ -3076,16 +3095,7 @@
 
             <details class="mkdocstrings-source">
               <summary>Source code in <code>src/minisweagent/run/mini.py</code></summary>
-              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 54</span>
-<span class="normal"> 55</span>
-<span class="normal"> 56</span>
-<span class="normal"> 57</span>
-<span class="normal"> 58</span>
-<span class="normal"> 59</span>
-<span class="normal"> 60</span>
-<span class="normal"> 61</span>
-<span class="normal"> 62</span>
-<span class="normal"> 63</span>
+              <div class="highlight"><table class="highlighttable"><tbody><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"> 63</span>
 <span class="normal"> 64</span>
 <span class="normal"> 65</span>
 <span class="normal"> 66</span>
@@ -3127,7 +3137,26 @@
 <span class="normal">102</span>
 <span class="normal">103</span>
 <span class="normal">104</span>
-<span class="normal">105</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">help</span><span class="o">=</span><span class="n">_HELP_TEXT</span><span class="p">)</span>
+<span class="normal">105</span>
+<span class="normal">106</span>
+<span class="normal">107</span>
+<span class="normal">108</span>
+<span class="normal">109</span>
+<span class="normal">110</span>
+<span class="normal">111</span>
+<span class="normal">112</span>
+<span class="normal">113</span>
+<span class="normal">114</span>
+<span class="normal">115</span>
+<span class="normal">116</span>
+<span class="normal">117</span>
+<span class="normal">118</span>
+<span class="normal">119</span>
+<span class="normal">120</span>
+<span class="normal">121</span>
+<span class="normal">122</span>
+<span class="normal">123</span>
+<span class="normal">124</span></pre></div></td><td class="code"><div><pre><span></span><code><span class="nd">@app</span><span class="o">.</span><span class="n">command</span><span class="p">(</span><span class="n">help</span><span class="o">=</span><span class="n">_HELP_TEXT</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">(</span>
     <span class="n">model_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">typer</span><span class="o">.</span><span class="n">Option</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="s2">"-m"</span><span class="p">,</span> <span class="s2">"--model"</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"Model to use"</span><span class="p">,),</span>
     <span class="n">model_class</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="n">typer</span><span class="o">.</span><span class="n">Option</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="s2">"--model-class"</span><span class="p">,</span> <span class="n">help</span><span class="o">=</span><span class="s2">"Model class to use (e.g., 'litellm' or 'minisweagent.models.litellm_model.LitellmModel')"</span><span class="p">,</span> <span class="n">rich_help_panel</span><span class="o">=</span><span class="s2">"Advanced"</span><span class="p">),</span>
@@ -3167,13 +3196,23 @@
     <span class="p">})</span>
     <span class="n">config</span> <span class="o">=</span> <span class="n">recursive_merge</span><span class="p">(</span><span class="o">*</span><span class="n">configs</span><span class="p">)</span>
 
+    <span class="c1"># Be lenient about cost tracking by default: models not in litellm's local</span>
+    <span class="c1"># price table (e.g. openrouter/google/gemini-2.5-flash) raise on cost calc,</span>
+    <span class="c1"># which would abort the whole run. Users can opt back into strict tracking</span>
+    <span class="c1"># with `-c model.cost_tracking=default`.</span>
+    <span class="n">config</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">"model"</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="s2">"cost_tracking"</span><span class="p">,</span> <span class="s2">"ignore_errors"</span><span class="p">)</span>
+
     <span class="k">if</span> <span class="p">(</span><span class="n">run_task</span> <span class="o">:=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"run"</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"task"</span><span class="p">,</span> <span class="n">UNSET</span><span class="p">))</span> <span class="ow">is</span> <span class="n">UNSET</span><span class="p">:</span>
         <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="s2">"[bold yellow]What do you want to do?"</span><span class="p">)</span>
         <span class="n">run_task</span> <span class="o">=</span> <span class="n">_multiline_prompt</span><span class="p">()</span>
         <span class="n">console</span><span class="o">.</span><span class="n">print</span><span class="p">(</span><span class="s2">"[bold green]Got that, thanks![/bold green]"</span><span class="p">)</span>
 
     <span class="n">model</span> <span class="o">=</span> <span class="n">get_model</span><span class="p">(</span><span class="n">config</span><span class="o">=</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"model"</span><span class="p">,</span> <span class="p">{}))</span>
-    <span class="n">env</span> <span class="o">=</span> <span class="n">get_environment</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"environment"</span><span class="p">,</span> <span class="p">{}),</span> <span class="n">default_type</span><span class="o">=</span><span class="s2">"local"</span><span class="p">)</span>
+    <span class="c1"># On Windows the local env shells out to cmd.exe, which can't run the bash</span>
+    <span class="c1"># syntax the agent is taught (heredocs, VAR=x cmd prefixes) and mangles</span>
+    <span class="c1"># non-ASCII text. Default to the bash env (Git Bash) there.</span>
+    <span class="n">default_env</span> <span class="o">=</span> <span class="s2">"bash"</span> <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="s2">"nt"</span> <span class="k">else</span> <span class="s2">"local"</span>
+    <span class="n">env</span> <span class="o">=</span> <span class="n">get_environment</span><span class="p">(</span><span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"environment"</span><span class="p">,</span> <span class="p">{}),</span> <span class="n">default_type</span><span class="o">=</span><span class="n">default_env</span><span class="p">)</span>
     <span class="n">agent</span> <span class="o">=</span> <span class="n">get_agent</span><span class="p">(</span><span class="n">model</span><span class="p">,</span> <span class="n">env</span><span class="p">,</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"agent"</span><span class="p">,</span> <span class="p">{}),</span> <span class="n">default_type</span><span class="o">=</span><span class="s2">"interactive"</span><span class="p">)</span>
     <span class="n">agent</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">run_task</span><span class="p">)</span>
     <span class="k">if</span> <span class="p">(</span><span class="n">output_path</span> <span class="o">:=</span> <span class="n">config</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"agent"</span><span class="p">,</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"output_path"</span><span class="p">)):</span>
